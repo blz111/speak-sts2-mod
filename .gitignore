@@ -1,0 +1,11 @@
+.godot/
+bin/
+/android/
+.idea/
+.vs/
+publish/
+Properties/
+.editorconfig
+*.import
+*.uid
+*.user
