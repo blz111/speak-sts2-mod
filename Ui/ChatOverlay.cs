@@ -1,12 +1,19 @@
 using Godot;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using Sts2Speak.Diagnostics;
 using Sts2Speak.Services;
 
 namespace Sts2Speak.Ui;
 
 public partial class ChatOverlay : Control
 {
+    private const float PanelMargin = 24f;
+    private const float PanelMaxWidth = 560f;
+    private const float PanelMaxHeight = 260f;
+    private const float PanelMinWidth = 320f;
+    private const float PanelMinHeight = 180f;
+
     private enum OverlayState
     {
         Hidden,
@@ -29,16 +36,17 @@ public partial class ChatOverlay : Control
     public override void _Ready()
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
+        TopLevel = true;
+        ZAsRelative = false;
+        ZIndex = 4096;
         MouseFilter = MouseFilterEnum.Ignore;
 
         _panel = new PanelContainer
         {
             Visible = false,
-            CustomMinimumSize = new Vector2(560f, 260f),
-            OffsetLeft = 24f,
-            OffsetBottom = -24f
+            CustomMinimumSize = new Vector2(PanelMinWidth, PanelMinHeight)
         };
-        _panel.SetAnchorsPreset(LayoutPreset.BottomLeft);
+        _panel.SetAnchorsPreset(LayoutPreset.TopLeft);
         AddChild(_panel);
 
         MarginContainer margin = new();
@@ -85,23 +93,32 @@ public partial class ChatOverlay : Control
         };
         _sendButton.Pressed += SubmitCurrentText;
         _inputRow.AddChild(_sendButton);
-    }
 
-    public override void _Input(InputEvent @event)
-    {
-        if (@event is not InputEventKey { Pressed: true, Echo: false, Keycode: Key.Tab })
+        Viewport viewport = GetViewport();
+        if (viewport != null)
         {
-            return;
+            viewport.SizeChanged += UpdateLayout;
         }
 
-        HandleTabPressed();
-        GetViewport().SetInputAsHandled();
+        UpdateLayout();
+        RuntimeTrace.Write("ChatOverlay._Ready(): layout initialized.");
+    }
+
+    public override void _ExitTree()
+    {
+        Viewport viewport = GetViewport();
+        if (viewport != null)
+        {
+            viewport.SizeChanged -= UpdateLayout;
+        }
+
+        base._ExitTree();
     }
 
     public void RefreshHistory(IReadOnlyList<ChatService.ChatEntry> entries)
     {
         _historyLabel.Text = entries.Count == 0
-            ? "聊天已连接。按 Tab 打开输入框。"
+            ? "按 Tab 打开聊天框。"
             : string.Join('\n', entries.Select(entry => $"[{entry.Timestamp}] {entry.DisplayName}: {entry.Text}"));
     }
 
@@ -113,10 +130,14 @@ public partial class ChatOverlay : Control
         }
 
         CancelTransientVisibility();
+        UpdateLayout();
+        MoveToFront();
+        _panel.MoveToFront();
         SetPanelAlpha(1f);
         _panel.Visible = true;
         _inputRow.Visible = false;
         _state = OverlayState.Preview;
+        RuntimeTrace.Write("ChatOverlay.ShowPreview() called.");
 
         int version = ++_previewVersion;
         _ = RunPreviewFadeAsync(version);
@@ -124,20 +145,17 @@ public partial class ChatOverlay : Control
 
     public void ShowCompose()
     {
-        if (!ChatService.CanUseChat(out string reason))
-        {
-            MainFile.Logger.Info(reason);
-            HideOverlay();
-            return;
-        }
-
         CancelTransientVisibility();
+        UpdateLayout();
+        MoveToFront();
+        _panel.MoveToFront();
         SetPanelAlpha(1f);
         _panel.Visible = true;
         _inputRow.Visible = true;
         _state = OverlayState.Compose;
         NHotkeyManager.Instance?.AddBlockingScreen(this);
         _input.GrabFocus();
+        RuntimeTrace.Write("ChatOverlay.ShowCompose() called.");
     }
 
     public void HideOverlay()
@@ -146,6 +164,7 @@ public partial class ChatOverlay : Control
         _state = OverlayState.Hidden;
         _panel.Visible = false;
         NHotkeyManager.Instance?.RemoveBlockingScreen(this);
+        RuntimeTrace.Write("ChatOverlay.HideOverlay() called.");
     }
 
     private void HandleTabPressed()
@@ -157,6 +176,23 @@ public partial class ChatOverlay : Control
         }
 
         ShowCompose();
+    }
+
+    public void ToggleCompose()
+    {
+        RuntimeTrace.Write($"ChatOverlay.ToggleCompose() called while state={_state}.");
+        HandleTabPressed();
+    }
+
+    private void UpdateLayout()
+    {
+        Vector2 viewportSize = GetViewportRect().Size;
+        float panelWidth = Mathf.Min(PanelMaxWidth, Mathf.Max(PanelMinWidth, viewportSize.X - PanelMargin * 2f));
+        float panelHeight = Mathf.Min(PanelMaxHeight, Mathf.Max(PanelMinHeight, viewportSize.Y - PanelMargin * 2f));
+
+        _panel.Position = new Vector2(PanelMargin, Mathf.Max(PanelMargin, viewportSize.Y - panelHeight - PanelMargin));
+        _panel.Size = new Vector2(panelWidth, panelHeight);
+        RuntimeTrace.Write($"ChatOverlay.UpdateLayout(): viewport={viewportSize}, panelPos={_panel.Position}, panelSize={_panel.Size}.");
     }
 
     private async Task RunPreviewFadeAsync(int version)

@@ -9,3 +9,4 @@ Properties/
 *.import
 *.uid
 *.user
+.tmp_check.pck

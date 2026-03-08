@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
+using Sts2Speak.Diagnostics;
 
 namespace Sts2Speak;
 
@@ -14,8 +15,10 @@ public partial class MainFile : Node
 
     public static void Initialize()
     {
+        RuntimeTrace.Write("MainFile.Initialize() called.");
         Harmony harmony = new(ModId);
         harmony.PatchAll();
         Logger.Info("Sts2Speak initialized.");
+        RuntimeTrace.Write("Harmony.PatchAll() completed.");
     }
 }

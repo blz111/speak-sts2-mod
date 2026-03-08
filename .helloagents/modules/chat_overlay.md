@@ -6,6 +6,8 @@
 
 - 注册并处理聊天广播消息
 - 缓存聊天记录并向 UI 回放
+- 将聊天框常驻挂载到 `NGame`，保证 `Tab` 全局可呼出
+- 根据当前视口分辨率动态计算左下角位置与尺寸，避免聊天框跑出屏幕
 - 管理聊天框 `Hidden | Preview | Compose | Fading` 状态
 - 处理 `Tab` 显隐逻辑与输入提交
 - 在战斗中 best effort 复用 `NSpeechBubbleVfx.Create(...)` 显示头顶说话气泡
@@ -15,9 +17,9 @@
 | 文件 | 作用 |
 |------|------|
 | `MainFile.cs` | Mod 入口，初始化 Harmony Patch |
-| `Patches/GameBootstrapPatch.cs` | 在 `NGame` / `NRun` / `RunManager` 生命周期中挂接聊天服务 |
-| `Messages/ChatBroadcastMessage.cs` | 定义聊天消息字段、序列化与可靠广播行为 |
-| `Services/ChatService.cs` | 处理消息收发、去重、历史缓存、显示名解析与气泡复用 |
+| `Patches/GameBootstrapPatch.cs` | 在 `NGame` / `NRun` / `RunManager` 生命周期中挂接聊天服务与全局 `Tab` 入口 |
+| `Messages/ChatBroadcastMessage.cs` | 定义联机聊天消息字段、序列化与可靠广播行为 |
+| `Services/ChatService.cs` | 处理 UI 挂载、消息收发、去重、历史缓存、显示名解析与气泡复用 |
 | `Ui/ChatOverlay.cs` | 渲染聊天框，管理预览、输入态与渐隐状态机 |
 
 ## 3. 关键接口
@@ -42,6 +44,7 @@
   - AttachToCurrentRun()
   - DetachFromCurrentRun()
 聊天:
+  - ToggleOverlayFromTab()
   - TrySendChat(string rawText)
   - GetHistory()
   - RefreshOverlayHistory()
@@ -67,11 +70,11 @@
 ### 场景一：本地玩家发送消息
 
 ```yaml
-1. 玩家按 Tab 打开 Compose 状态
+1. 玩家在任意游戏状态下按 Tab 打开 Compose 状态
 2. 在 LineEdit 输入文字并提交
-3. ChatService.TrySendChat() 规范化文本并广播 ChatBroadcastMessage
-4. 服务层追加本地历史并刷新 ChatOverlay
-5. 若战斗上下文可用，则为发送者创建或替换头顶说话气泡
+3. ChatService.TrySendChat() 规范化文本
+4. 若当前是真实联机局，则广播 ChatBroadcastMessage；否则仅写入本地历史
+5. 服务层刷新 ChatOverlay，并在可用时为本地玩家显示头顶说话气泡
 ```
 
 ### 场景二：远端玩家发言
@@ -89,7 +92,8 @@
 
 | 约束 | 说明 |
 |------|------|
-| 仅多人联机局生效 | 单机或伪联机状态下不启用聊天 |
+| 聊天框全局可呼出 | 不再要求先满足多人联机条件才能打开输入框 |
+| 仅真实联机时发包 | 单机或伪联机状态下不广播消息包，仅保留本地显示 |
 | 消息长度受服务层截断 | 避免过长文本破坏 UI 与气泡显示 |
 | 头顶气泡是 best effort | 仅在战斗、存在 `Creature` 和 `CombatVfxContainer` 时尝试显示 |
 | 历史缓存有上限 | 通过 `MaxHistoryCount` 控制内存与显示规模 |

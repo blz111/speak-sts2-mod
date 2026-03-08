@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Vfx;
 using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.Runs;
+using Sts2Speak.Diagnostics;
 using Sts2Speak.Messages;
 using Sts2Speak.Ui;
 
@@ -41,7 +42,9 @@ public static class ChatService
         }
 
         _globalInitialized = true;
+        EnsureOverlay();
         MainFile.Logger.Info("Sts2Speak global bootstrap complete.");
+        RuntimeTrace.Write("ChatService.InitializeGlobal() completed.");
     }
 
     public static void AttachToCurrentRun()
@@ -49,6 +52,8 @@ public static class ChatService
         INetGameService? netService = RunManager.Instance.NetService;
         if (netService == null)
         {
+            EnsureOverlay();
+            RuntimeTrace.Write("ChatService.AttachToCurrentRun(): NetService is null.");
             return;
         }
 
@@ -65,6 +70,7 @@ public static class ChatService
         EnsureOverlay();
         RefreshOverlayHistory();
         MainFile.Logger.Info("Sts2Speak attached to current run.");
+        RuntimeTrace.Write("ChatService.AttachToCurrentRun() completed.");
     }
 
     public static void DetachFromCurrentRun()
@@ -86,23 +92,21 @@ public static class ChatService
         ActiveBubbles.Clear();
         ProcessedMessageIds.Clear();
         History.Clear();
-
         if (_overlay != null && GodotObject.IsInstanceValid(_overlay))
         {
-            _overlay.QueueFree();
+            _overlay.HideOverlay();
+            _overlay.RefreshHistory(History);
         }
-
-        _overlay = null;
     }
 
-    public static bool CanUseChat(out string reason)
+    public static bool CanSendNetworkChat(out string reason)
     {
         reason = string.Empty;
 
         RunState? runState = RunManager.Instance.DebugOnlyGetState();
-        if (runState == null || NRun.Instance?.GlobalUi == null)
+        if (runState == null)
         {
-            reason = "当前不在运行中的联机局内。";
+            reason = "当前不在运行中的对局内。";
             return false;
         }
 
@@ -121,14 +125,16 @@ public static class ChatService
         return true;
     }
 
+    public static bool ToggleOverlayFromTab()
+    {
+        ChatOverlay overlay = EnsureOverlay();
+        RuntimeTrace.Write($"ChatService.ToggleOverlayFromTab(): overlay found, compose={overlay.IsComposeVisible}.");
+        overlay.ToggleCompose();
+        return true;
+    }
+
     public static bool TrySendChat(string rawText)
     {
-        if (!CanUseChat(out string reason))
-        {
-            MainFile.Logger.Info(reason);
-            return false;
-        }
-
         string text = NormalizeMessage(rawText);
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -137,6 +143,22 @@ public static class ChatService
 
         RunState? runState = RunManager.Instance.DebugOnlyGetState();
         Player? me = LocalContext.GetMe(runState);
+        string localDisplayName = me != null ? GetPlayerDisplayName(me) : "本地";
+
+        bool canSendNetwork = CanSendNetworkChat(out string reason);
+        if (!canSendNetwork)
+        {
+            MainFile.Logger.Info($"Sts2Speak sends locally only: {reason}");
+            AppendHistory(localDisplayName, text, true);
+            RefreshOverlayHistory();
+            if (me != null)
+            {
+                TryShowSpeechBubble(me, text);
+            }
+
+            return true;
+        }
+
         if (me == null || !LocalContext.NetId.HasValue || _registeredNetService == null)
         {
             MainFile.Logger.Warn("Sts2Speak failed to resolve the local player.");
@@ -184,8 +206,16 @@ public static class ChatService
         }
 
         _overlay = new ChatOverlay();
-        NRun.Instance!.GlobalUi.AddChild(_overlay);
+        if (NGame.Instance == null)
+        {
+            RuntimeTrace.Write("ChatService.EnsureOverlay(): NGame.Instance is null.");
+            throw new InvalidOperationException("Sts2Speak cannot attach the overlay before NGame is ready.");
+        }
+
+        NGame.Instance.AddChild(_overlay);
+        NGame.Instance.MoveChild(_overlay, NGame.Instance.GetChildCount() - 1);
         _overlay.RefreshHistory(History);
+        RuntimeTrace.Write("ChatService.EnsureOverlay(): overlay created and added to NGame.");
         return _overlay;
     }
 
